@@ -1,4 +1,5 @@
 #include "ProcessWidget.h"
+#include "WinIcon.h"
 
 static const char WidgetName[] = "Processes";
 
@@ -251,7 +252,7 @@ bool ProcessWidget_C::AddProcess(RpcProcessInfo_T* pRpcProcessInfo)
  
 	if ( pRpcProcessInfo->hIcon!=NULL )	
 	{	
-		AddProcessItem(pProcess,Index,Column_Name, Qt::DecorationRole, QIcon( QtWin::fromHICON( pRpcProcessInfo->hIcon ) ) );
+		AddProcessItem(pProcess,Index,Column_Name, Qt::DecorationRole, QIcon( RpcViewPixmapFromHICON( pRpcProcessInfo->hIcon ) ) );
 		DestroyIcon( pRpcProcessInfo->hIcon );
 	}
 
@@ -421,13 +422,10 @@ void ProcessWidget_C::UpdateUserFilter()
 //------------------------------------------------------------------------------
 void ProcessWidget_C::ApplyUserFilter(const QString & FilterText)
 {
-	QRegExp	FilterRegExp;
-
-	FilterRegExp.setPattern( FilterText );
-	FilterRegExp.setCaseSensitivity( Qt::CaseInsensitive );
+	QRegularExpression FilterRegExp(FilterText, QRegularExpression::CaseInsensitiveOption);
 
 	pProxyModel->setFilterKeyColumn(-1);		//filter all columns: UGLY Qt
-	pProxyModel->setFilterRegExp( FilterRegExp );
+	pProxyModel->setFilterRegularExpression(FilterRegExp);
 
 	if ( pProxyModel->rowCount()==pModel->rowCount() )
 	{
@@ -442,7 +440,7 @@ void ProcessWidget_C::ApplyUserFilter(const QString & FilterText)
 		}
 		else
 		{
-			pProxyModel->setFilterRegExp( QRegExp(".*") );
+			pProxyModel->setFilterRegularExpression(QRegularExpression(".*"));
 		}
 	}
 	else

@@ -18,7 +18,7 @@ private:
 	quint32				Pid;
 public:
 	ProcessSelectedVisitor_C(quint32 Pid,RpcCore_T* pRpcCore,void* pRpcCoreCtxt);
-	ProcessSelectedVisitor_C::~ProcessSelectedVisitor_C();
+	~ProcessSelectedVisitor_C();
 	ULONG	GetEndpoints();
 	ULONG	GetInterfaces();
 	ULONG	GetProcesses();

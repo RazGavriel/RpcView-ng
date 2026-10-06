@@ -3,6 +3,9 @@
 
 #define QT_BUILD_CONFIGURE
 #define NOMINMAX
+#ifndef UNREFERENCED_PARAMETER
+#define UNREFERENCED_PARAMETER(P) (void)(P)
+#endif
 #include <QtCore/QSortFilterProxyModel>
 #include <QtGui/QStandardItemModel>
 #include <QtWidgets/QDockWidget>
@@ -19,8 +22,9 @@
 #include <QtCore/QTimer>
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QStatusBar>
-#include <QtWidgets/QAction>
-#include <QtWidgets/QActionGroup>
+#include <QtWidgets/QProgressBar>
+#include <QtGui/QAction>
+#include <QtGui/QActionGroup>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QMenuBar>
 #include <QtGui/QPixmap>
@@ -43,6 +47,6 @@
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QDialogButtonBox>
 #include <QtCore/QSignalMapper>
-#include <QtWinExtras/qwinfunctions.h>
+#include <QtCore/QRegularExpression>
 
 #endif

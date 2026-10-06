@@ -100,8 +100,8 @@ void InterfacesWidget_C::InterfaceSelected(const QModelIndex& Index)
 //------------------------------------------------------------------------------
 void InterfacesWidget_C::ApplyProcessFilter(quint32 Pid)
 {
-	pProxyModel->setFilterRegExp( QString("^%1$").arg(Pid) );
-	if (pProxyModel->rowCount() == 0) pProxyModel->setFilterRegExp( QRegExp(".*") );
+	pProxyModel->setFilterRegularExpression(QString("^%1$").arg(Pid));
+	if (pProxyModel->rowCount() == 0) pProxyModel->setFilterRegularExpression(QRegularExpression(".*"));
 	
 	pFilterWidget->Reset();
 }
@@ -163,13 +163,10 @@ void InterfacesWidget_C::UpdateUserFilter()
 //------------------------------------------------------------------------------
 void InterfacesWidget_C::ApplyUserFilter(const QString & FilterText)
 {
-	QRegExp	FilterRegExp;
-
-	FilterRegExp.setPattern( FilterText );
-	FilterRegExp.setCaseSensitivity( Qt::CaseInsensitive );
+	QRegularExpression FilterRegExp(FilterText, QRegularExpression::CaseInsensitiveOption);
 
 	pProxyModel->setFilterKeyColumn(-1);
-	pProxyModel->setFilterRegExp( FilterRegExp );
+	pProxyModel->setFilterRegularExpression(FilterRegExp);
 }
 
 
@@ -250,8 +247,8 @@ bool InterfacesWidget_C::AddInterfaces(RpcInterfaceInfo_T* pRpcInterfaceInfo)
 	int			Index;
 	QString		PidString;
 	WCHAR*		pUuidString				= NULL;
-	WCHAR*		pTypeW					= NULL;
-	WCHAR*		pStubW					= NULL;
+	const WCHAR*	pTypeW				= NULL;
+	const WCHAR*	pStubW				= NULL;
 	
 	if (pRpcInterfaceInfo==NULL) goto End;
 	
@@ -342,6 +339,37 @@ End:
 void InterfacesWidget_C::AcceptVisitor(ViewVisitor_C* pVisitor)
 {
 	pVisitor->Visit(this);
+}
+
+
+//------------------------------------------------------------------------------
+void InterfacesWidget_C::CollectModules(QList<ModuleBase_T>& Modules)
+{
+	int	Rows;
+	int	i;
+	int	j;
+
+	Modules.clear();
+	Rows = pModel->rowCount();
+	for (i = 0; i < Rows; i++)
+	{
+		ModuleBase_T	Item;
+		bool			Ok = false;
+		bool			Seen = false;
+
+		Item.Pid = pModel->data(pModel->index(i, Column_Pid)).toString().toUInt(&Ok);
+		Item.Base = (quintptr)pModel->data(pModel->index(i, Column_Base), Qt::UserRole).toULongLong();
+		if (!Ok || Item.Pid == 0 || Item.Base == 0) continue;
+		for (j = 0; j < Modules.size(); j++)
+		{
+			if (Modules[j].Pid == Item.Pid && Modules[j].Base == Item.Base)
+			{
+				Seen = true;
+				break;
+			}
+		}
+		if (!Seen) Modules.append(Item);
+	}
 }
 
 

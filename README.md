@@ -2,7 +2,52 @@
 
 RpcView is an open-source tool to explore and decompile all RPC functionalities present on a Microsoft system.
 
-You can download the last [automatically built release](https://ci.appveyor.com/project/silverf0x/rpcview/build/artifacts)
+This fork runs on current Windows 11 and builds with Qt 6. The two sections below are the main changes.
+Build and runtime notes, then the original compile instructions, follow them.
+The same notes are in [CHANGES.md](CHANGES.md).
+
+## Procedure names
+
+The default symbol path is already set, so you do not need to configure it:
+
+`srv*C:\Symbols*https://msdl.microsoft.com/download/symbols`
+
+`C:\Symbols` is the local cache. The address after the second `*` is the Microsoft symbol server.
+Options → Configure Symbols shows this path until you save a different one.
+
+Added: the bottom-left bar names the PDB that is downloading and a percent from 0 to 100.
+In the picture the bar reads `Downloading AudioSrv.pdb` at 37%.
+
+Click an interface after its PDB is on disk. The Procedures pane then shows the real function names.
+`RAILaunchProcessWithIdentity` is an example. In the picture, `appinfo.dll` shows that name
+and the other `RAI*` calls.
+
+One dbghelp session stays open for the life of the window. Clicking an interface does not call `SymCleanup`.
+A module is loaded from its DLL path. Missing PDBs download on a background thread.
+A compressed or failed download falls back to a hidden `RpcView.exe /symfetch` process.
+
+![Procedure names in the Procedures pane, with AudioSrv.pdb downloading at 37%](images/procedure-names.png)
+
+## Download PDBs menu
+
+**Download PDBs** is on the menu bar, between Filter and Help. **Download All PDBs** asks
+"Are you sure you want to download all PDBs?" No is the default.
+Yes queues only PDB files that are not already under `C:\Symbols`.
+The scan runs off the UI thread. Auto-refresh stops while that question is open and while the scan runs,
+so the window does not show as not responding.
+
+![Download PDBs menu and the Download All PDBs item](images/download-pdbs-menu.png)
+
+## Also in this fork
+
+- RpcCore4 accepts the Windows 11 `rpcrt4.dll` file version used here, so the tool loads RpcCore4
+  instead of stopping on an unknown runtime.
+- `ntdll.dll` is loaded with `GetModuleHandleA`. The UNICODE build was crashing at startup.
+- CMake targets Qt 6 Widgets and C++17. `RpcView/WinIcon.h` replaces `QtWin::fromHICON`.
+- Widgets that used `QRegExp` now use `QRegularExpression`.
+
+You can download the last upstream [automatically built release](https://ci.appveyor.com/project/silverf0x/rpcview/build/artifacts).
+That build does not include the changes above.
 
 [![Build status](https://ci.appveyor.com/api/projects/status/o5wy6mdk16tuht70?svg=true)](https://ci.appveyor.com/project/silverf0x/rpcview)
 

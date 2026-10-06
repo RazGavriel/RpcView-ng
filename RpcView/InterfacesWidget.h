@@ -2,6 +2,7 @@
 #define _INTERFACES_WIDGET_H_
 
 #include "..\Qt\Qt.h"
+#include <QtCore/QList>
 #include "..\RpcCore\RpcCore.h"
 #include "FilterWidget.h"
 #include "View.h"
@@ -52,6 +53,12 @@ public:
 	void			resizeColumnsToContents();
 	bool			AddInterfaces(RpcInterfaceInfo_T* pRpcInterfaceInfo);
 	void			SetAddressRepresentation(AddressRepresentation_T AddressRepresentation);
+
+	typedef struct _ModuleBase_T {
+		quint32		Pid;
+		quintptr	Base;
+	} ModuleBase_T;
+	void			CollectModules(QList<ModuleBase_T>& Modules);
 
 public slots:
 	void	ApplyUserFilter(const QString &);

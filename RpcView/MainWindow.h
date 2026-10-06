@@ -58,6 +58,8 @@ private slots:
 	void FilterProcesses();
 	void FilterEndpoints();
 	void FilterInterfaces();
+	void UpdateDownloadStatus();
+	void DownloadAllPdbs();
 
 private:
 	void*					pRpcCoreCtxt;
@@ -76,6 +78,10 @@ private:
 	QLabel*					pProcessesCountLabel;
 	QLabel*					pInterfacesCountLabel;
 	QLabel*					pEndpointsCountLabel;
+	QLabel*					pDownloadLabel;
+	QProgressBar*			pDownloadBar;
+	QTimer*					pDownloadTimer;
+	bool					DownloadStatusVisible;
 
 	QAction*				pActionViewInterfaces;
 	QAction*				pActionViewEndpoints;
@@ -109,6 +115,8 @@ private:
 
 
 	void SendVisitor(ViewVisitor_C& pVisitor);
+	void PauseAutoRefresh();
+	void ResumeAutoRefresh();
 	void InitMenuRefreshSpeed();
 	void InitMenuAddressRepresentation();
 	void InitColumnsDialog();

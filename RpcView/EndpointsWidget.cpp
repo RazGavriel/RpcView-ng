@@ -37,12 +37,12 @@ void EndpointsWidget_C::ApplyProcessFilter(quint32 Pid)
 {
 	if (Pid == INVALID_PID_VALUE)
 	{
-		pProxyModel->setFilterRegExp( QRegExp(".*") );
+		pProxyModel->setFilterRegularExpression(QRegularExpression(".*"));
 	}
 	else
 	{
-		pProxyModel->setFilterRegExp( QString("^%1$").arg(Pid) );
-		if (pProxyModel->rowCount() == 0) pProxyModel->setFilterRegExp( QRegExp(".*") );
+		pProxyModel->setFilterRegularExpression(QString("^%1$").arg(Pid));
+		if (pProxyModel->rowCount() == 0) pProxyModel->setFilterRegularExpression(QRegularExpression(".*"));
 	}
 	pFilterWidget->Reset();
 }
@@ -165,13 +165,10 @@ void EndpointsWidget_C::UpdateUserFilter()
 //------------------------------------------------------------------------------
 void EndpointsWidget_C::ApplyUserFilter(const QString & FilterText)
 {
-	QRegExp	FilterRegExp;
-
-	FilterRegExp.setPattern( FilterText );
-	FilterRegExp.setCaseSensitivity( Qt::CaseInsensitive );
+	QRegularExpression FilterRegExp(FilterText, QRegularExpression::CaseInsensitiveOption);
 
 	pProxyModel->setFilterKeyColumn(-1);		//filter all columns: UGLY Qt
-	pProxyModel->setFilterRegExp( FilterRegExp );
+	pProxyModel->setFilterRegularExpression(FilterRegExp);
 }
 
 

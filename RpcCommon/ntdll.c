@@ -14,7 +14,7 @@ NTSTATUS NTAPI NtQueryInformationProcess(
 {
 	if (NtQueryInformationProcessFn == NULL)
 	{
-		NtQueryInformationProcessFn = (NtQueryInformationProcessFn_T)GetProcAddress(GetModuleHandle("ntdll.dll"), "NtQueryInformationProcess");
+		NtQueryInformationProcessFn = (NtQueryInformationProcessFn_T)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationProcess");
 	}
 	return NtQueryInformationProcessFn(
 		ProcessHandle,

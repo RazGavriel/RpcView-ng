@@ -327,18 +327,71 @@ End:
 }
 
 
+/* A dead domain controller makes LookupAccountSidW block for tens of seconds. */
+#define ACCOUNT_LOOKUP_TIMEOUT_MS 400
+#define ACCOUNT_CACHE_MS 30000
+
+typedef struct _AccountLookup_T {
+	PSID			Sid;
+	WCHAR			UserName[RPC_MAX_LENGTH];
+	WCHAR			DomainName[RPC_MAX_LENGTH];
+	BOOL			Ok;
+	HANDLE			Done;
+	volatile LONG	Refs;
+} AccountLookup_T;
+
+static DWORD	gCachedAccountPid = 0;
+static DWORD	gCachedAccountTick = 0;
+static BOOL		gCachedAccountOk = FALSE;
+static BOOL		gCachedAccountValid = FALSE;
+static WCHAR	gCachedAccountName[RPC_MAX_LENGTH];
+
+static void AccountLookupRelease(AccountLookup_T* pJob)
+{
+	if (InterlockedDecrement(&pJob->Refs) != 0) return;
+	if (pJob->Sid != NULL) HeapFree(GetProcessHeap(), 0, pJob->Sid);
+	if (pJob->Done != NULL) CloseHandle(pJob->Done);
+	HeapFree(GetProcessHeap(), 0, pJob);
+}
+
+static DWORD WINAPI AccountLookupThread(LPVOID Parameter)
+{
+	AccountLookup_T*	pJob = (AccountLookup_T*)Parameter;
+	DWORD				UserSize = _countof(pJob->UserName);
+	DWORD				DomainSize = _countof(pJob->DomainName);
+	SID_NAME_USE		SidType;
+
+	pJob->Ok = LookupAccountSidW(
+		NULL,
+		pJob->Sid,
+		pJob->UserName,
+		&UserSize,
+		pJob->DomainName,
+		&DomainSize,
+		&SidType);
+	SetEvent(pJob->Done);
+	AccountLookupRelease(pJob);
+	return 0;
+}
+
+
 //------------------------------------------------------------------------------
 BOOL WINAPI GetUserAndDomainName(DWORD Pid, WCHAR* Buffer, ULONG BufferLengthInBytes)
 {
-	HANDLE			hProcess	= NULL;
-	HANDLE			hToken		= NULL;
-	DWORD			Bytes;
-	TOKEN_USER*		pTokenUser=NULL;
-	WCHAR			UserName[RPC_MAX_LENGTH];
-	WCHAR			DomainName[RPC_MAX_LENGTH];
-	DWORD			dwSize;
-	SID_NAME_USE	SidType;
-	BOOL			bResult = FALSE;
+	HANDLE				hProcess	= NULL;
+	HANDLE				hToken		= NULL;
+	HANDLE				hThread		= NULL;
+	DWORD				Bytes;
+	DWORD				SidLength;
+	TOKEN_USER*			pTokenUser = NULL;
+	AccountLookup_T*	pLookup = NULL;
+	BOOL				bResult = FALSE;
+
+	if (gCachedAccountValid && Pid == gCachedAccountPid && (GetTickCount() - gCachedAccountTick) < ACCOUNT_CACHE_MS)
+	{
+		if (gCachedAccountOk) StringCbCopyW(Buffer, BufferLengthInBytes, gCachedAccountName);
+		return gCachedAccountOk;
+	}
 
 	hProcess = ProcexpOpenProcess(PROCESS_VM_OPERATION|PROCESS_QUERY_INFORMATION,FALSE,Pid);
 	if (hProcess==NULL) goto End;
@@ -348,11 +401,36 @@ BOOL WINAPI GetUserAndDomainName(DWORD Pid, WCHAR* Buffer, ULONG BufferLengthInB
 	pTokenUser=(TOKEN_USER*)OS_ALLOC(Bytes);
 	if (pTokenUser==NULL) goto End;
 	if (!GetTokenInformation(hToken,TokenUser,pTokenUser,Bytes,&Bytes)) goto End;
-	dwSize=_countof(UserName);
-	if (!LookupAccountSidW(NULL,pTokenUser->User.Sid,UserName,&dwSize,DomainName,&dwSize,&SidType)) goto End;
-	StringCbPrintfW(Buffer,BufferLengthInBytes,L"%s\\%s",DomainName,UserName);
-	bResult=TRUE;
+
+	pLookup = (AccountLookup_T*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*pLookup));
+	if (pLookup==NULL) goto End;
+	pLookup->Refs = 2;
+	SidLength = GetLengthSid(pTokenUser->User.Sid);
+	pLookup->Sid = (PSID)HeapAlloc(GetProcessHeap(), 0, SidLength);
+	if (pLookup->Sid==NULL || !CopySid(SidLength, pLookup->Sid, pTokenUser->User.Sid)) goto End;
+	pLookup->Done = CreateEventW(NULL, TRUE, FALSE, NULL);
+	if (pLookup->Done==NULL) goto End;
+
+	hThread = CreateThread(NULL, 0, AccountLookupThread, pLookup, 0, NULL);
+	if (hThread==NULL) goto End;
+	if (WaitForSingleObject(pLookup->Done, ACCOUNT_LOOKUP_TIMEOUT_MS)==WAIT_OBJECT_0 && pLookup->Ok)
+	{
+		StringCbPrintfW(Buffer, BufferLengthInBytes, L"%s\\%s", pLookup->DomainName, pLookup->UserName);
+		bResult = TRUE;
+	}
 End:
+	if (hThread!=NULL) CloseHandle(hThread);
+	if (pLookup!=NULL)
+	{
+		AccountLookupRelease(pLookup);
+		if (hThread==NULL) AccountLookupRelease(pLookup);
+	}
+	gCachedAccountPid = Pid;
+	gCachedAccountTick = GetTickCount();
+	gCachedAccountOk = bResult;
+	gCachedAccountValid = TRUE;
+	if (bResult) StringCbCopyW(gCachedAccountName, sizeof(gCachedAccountName), Buffer);
+	else gCachedAccountName[0] = 0;
 	if (pTokenUser!=NULL)	OS_FREE(pTokenUser);
 	if (hToken!=NULL)		CloseHandle(hToken);
 	if (hProcess!=NULL)		CloseHandle(hProcess);

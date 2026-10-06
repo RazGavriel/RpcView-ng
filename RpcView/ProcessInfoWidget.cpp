@@ -1,4 +1,5 @@
 #include "ProcessInfoWidget.h"
+#include "WinIcon.h"
 #include "../RpcCore/RpcCore.h"
 #include "../RpcCommon/Misc.h"
 
@@ -122,7 +123,7 @@ void ProcessInfoWidget_C::UpdateProcessInfo(RpcProcessInfo_T* pRpcProcessInfo)
 
 	if (pRpcProcessInfo->hIcon!=NULL)
 	{
-		pIconLabel->setPixmap( QtWin::fromHICON( pRpcProcessInfo->hIcon ) );
+		pIconLabel->setPixmap( RpcViewPixmapFromHICON( pRpcProcessInfo->hIcon ) );
 		pIconLabel->show();
 		DestroyIcon( pRpcProcessInfo->hIcon );
 	}

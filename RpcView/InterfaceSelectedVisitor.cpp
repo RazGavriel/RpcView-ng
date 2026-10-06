@@ -70,7 +70,7 @@ void InterfaceSelectedVisitor_C::Visit(InterfaceInfoWidget_C* pInterfaceInfoWidg
 		hProcess=ProcexpOpenProcess(PROCESS_ALL_ACCESS,FALSE,Pid);
 		if (hProcess==NULL) goto End;
 		
-		hPdb = PdbInit(hProcess, pRpcInterfaceInfo->pLocationBase, pRpcInterfaceInfo->LocationSize);
+		hPdb = PdbInit(hProcess, pRpcInterfaceInfo->pLocationBase, pRpcInterfaceInfo->LocationSize, pRpcInterfaceInfo->Location);
 		if (hPdb!=NULL)
 		{
 			PdbGetSymbolName(hPdb,pRpcInterfaceInfo->IfCallbackFn, SymbolName, sizeof(SymbolName));
@@ -143,7 +143,7 @@ void InterfaceSelectedVisitor_C::Visit(ProceduresWidget_C* pProceduresWidget)
 			hProcess=ProcexpOpenProcess(PROCESS_ALL_ACCESS,FALSE,Pid);
 			if (hProcess==NULL) goto End;
 			
-			hPdb = PdbInit(hProcess, pRpcInterfaceInfo->pLocationBase, pRpcInterfaceInfo->LocationSize);
+			hPdb = PdbInit(hProcess, pRpcInterfaceInfo->pLocationBase, pRpcInterfaceInfo->LocationSize, pRpcInterfaceInfo->Location);
 			for(ProcIdx=0;ProcIdx<pRpcInterfaceInfo->NumberOfProcedures;ProcIdx++)
 			{
 				if (pRpcInterfaceInfo->ppProcAddressTable!=NULL)

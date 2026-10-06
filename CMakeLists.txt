@@ -1,6 +1,9 @@
-cmake_minimum_required (VERSION 3.0.2) 
- 
+cmake_minimum_required(VERSION 3.21)
+
 project(RpcView)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(RPCVIEW_VERSION_MAJOR   0)
 set(RPCVIEW_VERSION_MINOR   3)
@@ -24,11 +27,11 @@ include_directories("${PROJECT_BINARY_DIR}")
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 
-set(CMAKE_CXX_FLAGS_DEBUG "/W4 /WX /MDd /EHsc /Zi")
-set(CMAKE_C_FLAGS_DEBUG "/W4 /WX /MDd /EHsc /Zi")
+set(CMAKE_CXX_FLAGS_DEBUG "/W4 /MDd /EHsc /Zi /MP")
+set(CMAKE_C_FLAGS_DEBUG "/W4 /MDd /EHsc /Zi /MP")
 
-set(CMAKE_CXX_FLAGS_RELEASE "/W4 /WX /O2 /Oi /Ot /Gy /MD /EHsc /MP")
-set(CMAKE_C_FLAGS_RELEASE "/W4 /WX /O2 /Oi /Ot /Gy /MD /EHsc /MP")
+set(CMAKE_CXX_FLAGS_RELEASE "/W4 /O2 /Oi /Ot /Gy /MD /EHsc /MP")
+set(CMAKE_C_FLAGS_RELEASE "/W4 /O2 /Oi /Ot /Gy /MD /EHsc /MP")
 
 set(CMAKE_EXE_LINKER_FLAGS "/INCREMENTAL:NO /OPT:REF /OPT:ICF")
 

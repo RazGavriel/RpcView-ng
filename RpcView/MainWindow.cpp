@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "WinIcon.h"
 #include "RpcViewResource.h"
 #include "../RpcCommon/Misc.h"
 #include <Psapi.h>
@@ -6,7 +7,9 @@
 #include <Dbghelp.h>
 #include <strsafe.h>
 #include <conio.h>
+#include <stdlib.h>
 
+#include "Pdb.h"
 #include "ConfigurationVisitor.h"
 #include "ProcessSelectedVisitor.h"
 #include "EndpointSelectedVisitor.h"
@@ -38,6 +41,7 @@ extern void		NTAPI InitDecompilerInfo(_In_ RpcInterfaceInfo_T* pRpcInterfaceInfo
 extern void		NTAPI UninitDecompilerInfo(RpcDecompilerInfo_T* pRpcDecompilerInfo);
 
 static const char WidgetName[] = "RpcView";
+static const char DefaultSymbolPath[] = "srv*C:\\Symbols*https://msdl.microsoft.com/download/symbols";
 
 //------------------------------------------------------------------------------
 void MainWindow_C::InterfaceSelected(quint32 Pid, RPC_IF_ID* pIf)
@@ -57,6 +61,8 @@ void MainWindow_C::InterfaceSelected(quint32 Pid, RPC_IF_ID* pIf)
 										);
 	
 	this->SendVisitor(InterfaceSelectedVisitor);
+	PdbConsumeDownloadNotice();
+	UpdateDownloadStatus();
 }
 
 
@@ -432,6 +438,10 @@ void MainWindow_C::Exit()
 //------------------------------------------------------------------------------
 void MainWindow_C::RefreshViews()
 {
+	/* A modal dialog still runs this timer. The process walk then freezes both windows. */
+	if (QApplication::activeModalWidget() != NULL)
+		return;
+
 	RefreshVisitor_C	RefreshVisitor(
 							pRpcCore,
 							pRpcCoreCtxt
@@ -454,6 +464,8 @@ void MainWindow_C::ConfigureSymbols()
 	QString			NewSymbolsPath;
 
 	CurrentSymbolsPath = pSettings->value("SymbolsPath").toString();
+	if (CurrentSymbolsPath.isEmpty())
+		CurrentSymbolsPath = QString::fromLatin1(DefaultSymbolPath);
 
 	NewSymbolsPath = QInputDialog::getText(
 							this,
@@ -465,6 +477,8 @@ void MainWindow_C::ConfigureSymbols()
 							);
 	 if ( bOk )
 	 {
+		 if (NewSymbolsPath.isEmpty())
+			 NewSymbolsPath = QString::fromLatin1(DefaultSymbolPath);
 		 pSettings->setValue("SymbolsPath",NewSymbolsPath);
 		 SetEnvironmentVariableA("RpcViewSymbolPath",NewSymbolsPath.toLatin1());
 	 }
@@ -552,6 +566,180 @@ void MainWindow_C::FilterInterfaces()
 {
 	pInterfacesWidget->setFocus(Qt::ActiveWindowFocusReason);
 	InvokeFindShortcut();
+}
+
+
+typedef struct _PdbScanItem_T {
+	DWORD	Pid;
+	VOID*	Base;
+} PdbScanItem_T;
+
+typedef struct _PdbScanParam_T {
+	PdbScanItem_T*	Items;
+	int				Count;
+} PdbScanParam_T;
+
+static volatile LONG	gPdbScanRunning = 0;
+static volatile LONG	gScanResultReady = 0;
+static volatile LONG	gScanQueued = 0;
+static volatile LONG	gScanPresent = 0;
+static bool				gRestoreAutoRefresh = false;
+
+
+//------------------------------------------------------------------------------
+void MainWindow_C::PauseAutoRefresh()
+{
+	/* The refresh walk runs on the UI thread. A modal question still dispatches
+	   that timer, which is what makes the window show as not responding. */
+	if (pRefreshTimer != NULL && pRefreshTimer->isActive())
+	{
+		pRefreshTimer->stop();
+		gRestoreAutoRefresh = true;
+	}
+}
+
+
+//------------------------------------------------------------------------------
+void MainWindow_C::ResumeAutoRefresh()
+{
+	if (!gRestoreAutoRefresh) return;
+	gRestoreAutoRefresh = false;
+	if (pRefreshTimer != NULL && this->RefreshSpeedInMs != 0)
+		pRefreshTimer->start(this->RefreshSpeedInMs);
+}
+
+
+//------------------------------------------------------------------------------
+static int __cdecl CmpPdbScanItem(const void* pLeft, const void* pRight)
+{
+	const PdbScanItem_T*	pA = (const PdbScanItem_T*)pLeft;
+	const PdbScanItem_T*	pB = (const PdbScanItem_T*)pRight;
+
+	if (pA->Pid < pB->Pid) return -1;
+	if (pA->Pid > pB->Pid) return 1;
+	if ((ULONG_PTR)pA->Base < (ULONG_PTR)pB->Base) return -1;
+	if ((ULONG_PTR)pA->Base > (ULONG_PTR)pB->Base) return 1;
+	return 0;
+}
+
+
+//------------------------------------------------------------------------------
+static DWORD WINAPI PdbScanThread(LPVOID Parameter)
+{
+	PdbScanParam_T*	pScan = (PdbScanParam_T*)Parameter;
+	HANDLE			hProcess = NULL;
+	DWORD			LastPid = 0;
+	int				Queued = 0;
+	int				Present = 0;
+	int				i;
+	int				Result;
+
+	for (i = 0; i < pScan->Count; i++)
+	{
+		if (hProcess == NULL || pScan->Items[i].Pid != LastPid)
+		{
+			if (hProcess != NULL) CloseHandle(hProcess);
+			hProcess = ProcexpOpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pScan->Items[i].Pid);
+			LastPid = pScan->Items[i].Pid;
+		}
+		if (hProcess == NULL) continue;
+		Result = PdbQueueModuleIfMissing(hProcess, pScan->Items[i].Base);
+		if (Result > 0) Queued++;
+		else if (Result == 0) Present++;
+	}
+	if (hProcess != NULL) CloseHandle(hProcess);
+	gScanQueued = Queued;
+	gScanPresent = Present;
+	InterlockedExchange(&gScanResultReady, 1);
+	free(pScan->Items);
+	free(pScan);
+	InterlockedExchange(&gPdbScanRunning, 0);
+	return 0;
+}
+
+
+//------------------------------------------------------------------------------
+void MainWindow_C::DownloadAllPdbs()
+{
+	CHAR									SymbolPath[1024];
+	QMessageBox::StandardButton				Answer;
+	QList<InterfacesWidget_C::ModuleBase_T>	Modules;
+	PdbScanParam_T*							pScan;
+	PdbScanItem_T*							pItems;
+	HANDLE									hThread;
+	char									Name[MAX_PATH];
+	int										Percent = 0;
+	BOOL									Active = FALSE;
+	int										i;
+
+	PauseAutoRefresh();
+	Answer = QMessageBox::question(
+		this,
+		"Download PDBs",
+		"Are you sure you want to download all PDBs?",
+		QMessageBox::Yes | QMessageBox::No,
+		QMessageBox::No);
+	if (Answer != QMessageBox::Yes)
+	{
+		ResumeAutoRefresh();
+		return;
+	}
+
+	SymbolPath[0] = 0;
+	if (GetEnvironmentVariableA("RpcViewSymbolPath", SymbolPath, sizeof(SymbolPath)) == 0 || SymbolPath[0] == 0)
+	{
+		StatusBar.showMessage("Symbol path not configured.");
+		ResumeAutoRefresh();
+		return;
+	}
+
+	if (InterlockedCompareExchange(&gPdbScanRunning, 1, 0) != 0)
+	{
+		StatusBar.showMessage("PDB download is already running.");
+		ResumeAutoRefresh();
+		return;
+	}
+
+	pInterfacesWidget->CollectModules(Modules);
+	if (Modules.isEmpty())
+	{
+		InterlockedExchange(&gPdbScanRunning, 0);
+		StatusBar.showMessage("No interfaces to download symbols for.");
+		ResumeAutoRefresh();
+		return;
+	}
+
+	pScan = (PdbScanParam_T*)calloc(1, sizeof(*pScan));
+	pItems = (PdbScanItem_T*)calloc((size_t)Modules.size(), sizeof(*pItems));
+	if (pScan == NULL || pItems == NULL)
+	{
+		free(pScan);
+		free(pItems);
+		InterlockedExchange(&gPdbScanRunning, 0);
+		ResumeAutoRefresh();
+		return;
+	}
+	for (i = 0; i < Modules.size(); i++)
+	{
+		pItems[i].Pid = Modules[i].Pid;
+		pItems[i].Base = (VOID*)Modules[i].Base;
+	}
+	qsort(pItems, (size_t)Modules.size(), sizeof(pItems[0]), CmpPdbScanItem);
+	pScan->Items = pItems;
+	pScan->Count = Modules.size();
+	hThread = CreateThread(NULL, 0, PdbScanThread, pScan, 0, NULL);
+	if (hThread == NULL)
+	{
+		free(pItems);
+		free(pScan);
+		InterlockedExchange(&gPdbScanRunning, 0);
+		ResumeAutoRefresh();
+		return;
+	}
+	CloseHandle(hThread);
+
+	if (!PdbGetDownloadStatus(Name, sizeof(Name), &Percent, &Active) || !Active)
+		StatusBar.showMessage("Looking for missing PDBs...");
 }
 
 
@@ -654,6 +842,11 @@ void MainWindow_C::SetupMenu()
 	pMenuFilter->addAction("&Endpoints", this, SLOT(FilterEndpoints()));
 	pMenuFilter->addAction("&Interfaces", this, SLOT(FilterInterfaces()));
 	//
+	// Download PDBs (between Filter and Help)
+	//
+	QMenu*		pMenuDownload = pMenuBar->addMenu("Download PDBs");
+	pMenuDownload->addAction("Download All PDBs", this, SLOT(DownloadAllPdbs()));
+	//
 	// Help
 	//
 	QMenu*		pMenuHelp = pMenuBar->addMenu("&Help");
@@ -670,7 +863,7 @@ void MainWindow_C::SetupMenu()
 	hUacIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(ID_UAC_ICON));
 	if (hUacIcon!=NULL)
 	{
-		pActionAllProcessesDetails->setIcon(QtWin::fromHICON(hUacIcon));
+		pActionAllProcessesDetails->setIcon(RpcViewPixmapFromHICON(hUacIcon));
 		DestroyIcon(hUacIcon);
 	}
 	setMenuBar(pMenuBar);
@@ -755,7 +948,17 @@ MainWindow_C::MainWindow_C(RpcCore_T* pRpcCore)
 	pProcessesCountLabel	= new QLabel("Processes: -",this);
 	pInterfacesCountLabel	= new QLabel("Interfaces: -",this);
 	pEndpointsCountLabel	= new QLabel("Enpoints: -",this);
+	pDownloadLabel			= new QLabel(this);
+	pDownloadBar			= new QProgressBar(this);
+	pDownloadBar->setRange(0, 100);
+	pDownloadBar->setValue(0);
+	pDownloadBar->setFormat("%p%");
+	pDownloadBar->setTextVisible(true);
+	pDownloadBar->setFixedWidth(130);
+	DownloadStatusVisible	= false;
 
+	StatusBar.addWidget(pDownloadLabel);
+	StatusBar.addWidget(pDownloadBar);
 	StatusBar.showMessage("Ready.");
 
 	StatusBar.addPermanentWidget(pEndpointsCountLabel);
@@ -763,10 +966,13 @@ MainWindow_C::MainWindow_C(RpcCore_T* pRpcCore)
 	StatusBar.addPermanentWidget(pProcessesCountLabel);
 
 	setStatusBar(&StatusBar);
+	pDownloadTimer = new QTimer(this);
+	connect(pDownloadTimer, SIGNAL(timeout()), this, SLOT(UpdateDownloadStatus()));
+	pDownloadTimer->start(200);
 
 #ifndef _DEBUG
-    HANDLE hIcon = LoadImageA(GetModuleHandle(NULL), MAKEINTRESOURCE(ID_MAIN_ICON), IMAGE_ICON, 0, 0, 0);
-	QSplashScreen SplashScreen(QtWin::fromHICON((HICON)hIcon),Qt::WindowStaysOnTopHint);
+    HANDLE hIcon = LoadImageW(GetModuleHandle(NULL), MAKEINTRESOURCEW(ID_MAIN_ICON), IMAGE_ICON, 0, 0, 0);
+	QSplashScreen SplashScreen(RpcViewPixmapFromHICON((HICON)hIcon),Qt::WindowStaysOnTopHint);
 	SplashScreen.showMessage(QString("RpcView"), Qt::AlignCenter, QColor(Qt::lightGray));
     QFont font("Helvetica", 20, QFont::Bold);
 	SplashScreen.setFont(font);
@@ -822,7 +1028,12 @@ MainWindow_C::MainWindow_C(RpcCore_T* pRpcCore)
 		SendVisitor(ConfigurationVisitorAddr);
 	}
 	
-	SetEnvironmentVariableA( "RpcViewSymbolPath",pSettings->value("SymbolsPath").toByteArray() );
+	{
+		QByteArray SymbolPath = pSettings->value("SymbolsPath").toString().toLocal8Bit();
+		if (SymbolPath.isEmpty())
+			SymbolPath = DefaultSymbolPath;
+		SetEnvironmentVariableA("RpcViewSymbolPath", SymbolPath.constData());
+	}
 	
 	pInterfacesCountLabel->setText( QString("Interfaces: %1").arg(InitViewsVisitor.GetInterfaces()) );
 	pEndpointsCountLabel->setText(  QString("Endpoints: %1").arg(InitViewsVisitor.GetEndpoints()) );
@@ -832,6 +1043,61 @@ MainWindow_C::MainWindow_C(RpcCore_T* pRpcCore)
 	pRefreshTimer = new QTimer(this);
     connect(pRefreshTimer, SIGNAL(timeout()), this, SLOT(RefreshViews()));
 	if (this->RefreshSpeedInMs) pRefreshTimer->start(this->RefreshSpeedInMs);
-	
+
 	InitColumnsDialog();
+}
+
+
+//------------------------------------------------------------------------------
+void MainWindow_C::UpdateDownloadStatus()
+{
+	char	Name[MAX_PATH];
+	int		Percent = 0;
+	BOOL	Active = FALSE;
+
+	if (pDownloadLabel == NULL || pDownloadBar == NULL) return;
+	if (!PdbGetDownloadStatus(Name, sizeof(Name), &Percent, &Active)) return;
+
+	if (Active)
+	{
+		if (Percent >= 100)
+			pDownloadLabel->setText(QString("Downloaded %1").arg(QString::fromLocal8Bit(Name)));
+		else
+			pDownloadLabel->setText(QString("Downloading %1").arg(QString::fromLocal8Bit(Name)));
+		if (Percent < 0)
+		{
+			pDownloadBar->setRange(0, 0);
+			pDownloadBar->setFormat(QString());
+		}
+		else
+		{
+			pDownloadBar->setRange(0, 100);
+			pDownloadBar->setFormat("%p%");
+			pDownloadBar->setValue(Percent);
+		}
+		if (!DownloadStatusVisible)
+			StatusBar.clearMessage();
+		DownloadStatusVisible = true;
+	}
+	else if (DownloadStatusVisible)
+	{
+		pDownloadLabel->clear();
+		pDownloadBar->setRange(0, 100);
+		pDownloadBar->setValue(0);
+		DownloadStatusVisible = false;
+		StatusBar.showMessage("Ready.");
+	}
+
+	if (InterlockedExchange(&gScanResultReady, 0) != 0)
+	{
+		int	Queued = (int)gScanQueued;
+		int	Present = (int)gScanPresent;
+
+		ResumeAutoRefresh();
+		if (Queued > 0 || DownloadStatusVisible) return;
+		if (Present > 0)
+			StatusBar.showMessage("All PDBs are already on disk.");
+		else
+			StatusBar.showMessage("No PDB information could be read.");
+	}
 }

@@ -1,4 +1,5 @@
 #include "..\Qt\Qt.h"
+#include "WinIcon.h"
 
 #include <windows.h>
 #include <locale.h>
@@ -180,7 +181,7 @@ void NTAPI InitDecompilerInfo(_In_ RpcInterfaceInfo_T* pRpcInterfaceInfo, _Out_ 
 	pRpcDecompilerInfo->ppDispatchProcAddressTable = (RVA_T*)OS_ALLOC(pRpcDecompilerInfo->NumberOfProcedures*sizeof(RVA_T));
 	if (pRpcDecompilerInfo->ppDispatchProcAddressTable == NULL) goto End;
 
-	hPdb = PdbInit(hProcess, pRpcInterfaceInfo->pLocationBase, pRpcInterfaceInfo->LocationSize);
+	hPdb = PdbInit(hProcess, pRpcInterfaceInfo->pLocationBase, pRpcInterfaceInfo->LocationSize, pRpcInterfaceInfo->Location);
 	if (hPdb == NULL) goto End;
 	for (i = 0; i<pRpcDecompilerInfo->NumberOfProcedures; i++)
 	{
@@ -355,6 +356,11 @@ End:
 	}
 		
 #endif
+	if (argc >= 6 && argv[1] != NULL && _stricmp(argv[1], "/symfetch") == 0)
+	{
+		return PdbRunSymbolFetch(argv[2], argv[3], argv[4], argv[5]);
+	}
+
 	QApplication app(argc, argv);
     QSettings   Settings(RPC_VIEW_ORGANIZATION_NAME, RPC_VIEW_APPLICATION_NAME);
  	//
@@ -395,7 +401,7 @@ End:
 	hMainIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(ID_MAIN_ICON));
 	if (hMainIcon!=NULL)
 	{
-		pMainWindow->setWindowIcon(QtWin::fromHICON(hMainIcon));
+		pMainWindow->setWindowIcon(RpcViewPixmapFromHICON(hMainIcon));
 		DestroyIcon(hMainIcon);
 	}
 	ret =  app.exec();
