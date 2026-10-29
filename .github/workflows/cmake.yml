@@ -41,17 +41,15 @@ jobs:
         Copy-Item (Join-Path $built '*.exe') $pack
         Copy-Item (Join-Path $built '*.dll') $pack
         $deploy = Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe'
-        & $deploy --release --compiler-runtime --no-translations (Join-Path $pack 'RpcView.exe')
+        & $deploy --release --no-translations (Join-Path $pack 'RpcView.exe')
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        $kit = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory |
-          Where-Object { $_.Name -match '^\d' } |
-          Sort-Object Name -Descending |
-          Select-Object -First 1
-        foreach ($name in 'dbghelp.dll','symsrv.dll','dbgcore.dll') {
-          $src = Join-Path $kit.FullName "x64\$name"
-          if (-not (Test-Path -LiteralPath $src)) { throw "Missing $src" }
-          Copy-Item -LiteralPath $src -Destination $pack -Force
-        }
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        $msvc = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
+        $crt = Get-ChildItem (Join-Path $msvc.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
+        if (-not $crt) { throw "VC runtime redist was not found" }
+        Copy-Item (Join-Path $crt.FullName '*.dll') $pack
+        Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'redist\x64\*.dll') $pack -Force
         @(
           'RpcView x64.'
           'Run RpcView.exe as administrator.'
