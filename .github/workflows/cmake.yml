@@ -45,8 +45,12 @@ jobs:
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        $msvc = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
+        $msvc = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory |
+          Where-Object { $_.Name -match '^\d+\.\d+' } |
+          Sort-Object Name -Descending |
+          Select-Object -First 1
         $crt = Get-ChildItem (Join-Path $msvc.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
+        Write-Host "VC runtime: $($crt.FullName)"
         if (-not $crt) { throw "VC runtime redist was not found" }
         Copy-Item (Join-Path $crt.FullName '*.dll') $pack
         Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'redist\x64\*.dll') $pack -Force
