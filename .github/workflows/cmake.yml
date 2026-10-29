@@ -1,68 +1,90 @@
-name: CMake
+name: Windows release
 
-on: [push, pull_request,workflow_dispatch]
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
 
-env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
-  BUILD_TYPE: Release
-  CMAKE_PREFIX_PATH: ${{github.workspace}}\..\Qt\5.15.2\msvc2019_64
-  ProjectDir: ${{github.workspace}}\build\bin\Release\
-  PackDirName: RpcView64
-  PackDirPath: ${{github.workspace}}\build\bin\Release\RpcView64
+permissions:
+  contents: write
+
 jobs:
   build:
-    # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
-    # You can convert this to a matrix build if you need cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
-    runs-on: windows-2019
-
+    runs-on: windows-2022
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Install Qt
-      # Installs the Qt SDK
-      uses: jurplel/install-qt-action@v3
+    - name: Install Qt 6.8
+      uses: jurplel/install-qt-action@v4
       with:
-        version: '5.15.2'
-        host: 'windows'
-        target: 'desktop'
-        arch: 'win64_msvc2019_64'
-        archives: 'qtbase qtwinextras qttools'
-        
-    - name: Configure CMake
-      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-      run: cmake -A x64 -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
- 
+        version: '6.8.3'
+        host: windows
+        target: desktop
+        arch: win64_msvc2022_64
+        archives: qtbase qtsvg qttools
+        cache: true
+
+    - name: Configure
+      shell: pwsh
+      run: cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+
     - name: Build
-      # Build your program with the given configuration
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
-    - name: Test
-      working-directory: ${{github.workspace}}/build
-      # Execute tests defined by the CMake configuration.
-      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-      run: ctest -C ${{env.BUILD_TYPE}}
+      run: cmake --build build --config Release --parallel
 
     - name: Package
-      id: Package
-      shell: cmd
-      #call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+      shell: pwsh
       run: |
-          cd ${{env.ProjectDir}}
-          mkdir ${{env.PackDirName}}
-          copy *.dll ${{env.PackDirName}}\
-          copy *.exe ${{env.PackDirName}}\
-          ${{env.CMAKE_PREFIX_PATH}}\bin\windeployqt.exe --no-angle --no-opengl-sw --no-system-d3d-compiler --no-translations --release ${{env.PackDirName}}\
-          
-    - name: Prune
-      id: Prune
-      shell: cmd
-      run: |
-          rmdir /s /q ${{env.PackDirPath}}\imageformats
-          rmdir /s /q ${{env.PackDirPath}}\styles
-          
-    - name: Upload Binaries
-      uses: actions/upload-artifact@v3
+        $ErrorActionPreference = 'Stop'
+        $built = Join-Path $env:GITHUB_WORKSPACE 'build\bin\Release'
+        $pack = Join-Path $env:GITHUB_WORKSPACE 'RpcView-Portable'
+        New-Item -ItemType Directory -Force -Path $pack | Out-Null
+        Copy-Item (Join-Path $built '*.exe') $pack
+        Copy-Item (Join-Path $built '*.dll') $pack
+        $deploy = Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe'
+        & $deploy --release --compiler-runtime --no-translations (Join-Path $pack 'RpcView.exe')
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $kit = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory |
+          Where-Object { $_.Name -match '^\d' } |
+          Sort-Object Name -Descending |
+          Select-Object -First 1
+        foreach ($name in 'dbghelp.dll','symsrv.dll','dbgcore.dll') {
+          $src = Join-Path $kit.FullName "x64\$name"
+          if (-not (Test-Path -LiteralPath $src)) { throw "Missing $src" }
+          Copy-Item -LiteralPath $src -Destination $pack -Force
+        }
+        @(
+          'RpcView x64.'
+          'Run RpcView.exe as administrator.'
+          'The default symbol path is srv*C:\Symbols*https://msdl.microsoft.com/download/symbols.'
+        ) | Set-Content -Path (Join-Path $pack 'README.txt') -Encoding ascii
+        $zip = Join-Path $env:GITHUB_WORKSPACE 'RpcView-Portable.zip'
+        tar.exe -a -c -f $zip -C $pack .
+
+    - name: Upload workflow artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: RpcView64-windows
-        path: ${{env.PackDirPath}}\
+        name: RpcView-Portable
+        path: RpcView-Portable.zip
+
+    - name: Publish GitHub release
+      if: github.ref == 'refs/heads/master'
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $notes = @(
+          'Windows x64 build of this fork.'
+          'Unzip the folder and run RpcView.exe as administrator.'
+          'The default symbol path is srv*C:\Symbols*https://msdl.microsoft.com/download/symbols.'
+          'Download PDBs is on the menu bar, between Filter and Help.'
+        ) -join "`n"
+        gh release view windows-x64 --json tagName | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+          gh release upload windows-x64 RpcView-Portable.zip --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } else {
+          gh release create windows-x64 RpcView-Portable.zip --title "Windows x64" --notes $notes --latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }

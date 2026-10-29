@@ -5,6 +5,7 @@ RpcView is an open-source tool to explore and decompile all RPC functionalities 
 This fork runs on current Windows 11 and builds with Qt 6. The two sections below are the main changes.
 Build and runtime notes, then the original compile instructions, follow them.
 The same notes are in [CHANGES.md](CHANGES.md).
+The Windows x64 build is on the [Releases page](https://github.com/RazGavriel/RpcView-ng/releases/tag/windows-x64).
 
 ## Procedure names
 
